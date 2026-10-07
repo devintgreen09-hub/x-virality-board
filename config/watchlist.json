@@ -1,1 +1,12 @@
-{"timezone":"Europe/Moscow","min_views":5000,"star_views":10000,"accounts":["SirEmilyjr","soapweb3","crypto_bitlord7","DRBTaskForce","Xilluminatedx1"]}
+{
+ "timezone": "America/New_York",
+ "min_views": 5000,
+ "star_views": 10000,
+ "accounts": [
+  "SirEmilyjr",
+  "soapweb3",
+  "crypto_bitlord7",
+  "DRBTaskForce",
+  "Xilluminatedx1"
+ ]
+}

@@ -655,7 +655,10 @@ function num(n){n=Number(n);return Number.isFinite(n)?n:0}
 function fmt(n){n=num(n);if(n===0)return'0';if(n>=1e6)return(n/1e6).toFixed(n>=1e7?0:2).replace(/\.0+$/,'').replace(/(\.\d)0$/,'$1')+'M';if(n>=1e3)return(n/1e3).toFixed(n>=1e5?0:1).replace(/\.0$/,'')+'K';return String(Math.round(n))}
 function fmtBestTotal(best,total){const b=num(best),t=total==null?b:num(total);if(!b&&!t)return'—';return `${fmt(b)} / ${fmt(t)}`}
 function pct(value,target){return target?Math.round(value/target*100):0}
-function scoreFor(hits,views){return Math.round(100*(.45*Math.min(hits/DASHBOARD_TARGETS.hits,1)+.55*Math.min(views/DASHBOARD_TARGETS.views,1)))}
+// Log scale: 1x target ~43, 2x ~68, 4x+ = 100 (so over-target days still differentiate)
+function logPart(r){return Math.min(Math.log2(1+Math.max(0,r))/Math.log2(5),1)}
+function scoreFor(hits,views){return Math.round(100*(.45*logPart(hits/DASHBOARD_TARGETS.hits)+.55*logPart(views/DASHBOARD_TARGETS.views)))}
+function safeUrl(u){try{const x=new URL(String(u||''));const ok=x.protocol==='https:'&&/^(www\.|mobile\.)?(x|twitter)\.com$/i.test(x.hostname);return ok?x.href:'#'}catch(e){return '#'}}
 function rawIndex(hits,views){return Math.round(100*(.45*(hits/DASHBOARD_TARGETS.hits)+.55*(views/DASHBOARD_TARGETS.views)))}
 function trendMarkup(delta,label){const dir=delta>0?'up':delta<0?'down':'flat';const arrow=delta>0?'↑':delta<0?'↓':'→';const d=delta===0?'on pace':`${delta>0?'+':''}${delta}`;return{dir,html:`<span class="trend-arrow">${arrow}</span><span>${d} ${label}</span>`}}
 function easeOutCubic(t){return 1-Math.pow(1-t,3)}
@@ -822,7 +825,7 @@ function renderYourDay(youRank, handle){
     if(bv==null){
       meta.textContent=youRank.note||'Best post unavailable — scrape needed.';
     }else{
-      const link=youRank.best_url?` · <a href="${esc(youRank.best_url)}" target="_blank" rel="noopener">open best post ↗</a>`:'';
+      const link=youRank.best_url?` · <a href="${esc(safeUrl(youRank.best_url))}" target="_blank" rel="noopener">open best post ↗</a>`:'';
       const rk=youRank.rank_among_watchlist!=null?` · rank #${youRank.rank_among_watchlist}/${youRank.total_accounts||'?'} `:'';
       meta.innerHTML=`Today <b style="color:var(--text)">${esc(fmtBestTotal(bv,tv))}</b> best / total${rk}${link}`;
     }
@@ -879,13 +882,13 @@ async function boot(){
   const hits=Array.isArray(d.hits)?d.hits:[];const virals=Array.isArray(d.virals)?d.virals:(Array.isArray(d.outsiders)?d.outsiders:[]);
   const totalViews=hits.reduce((a,h)=>a+num(h.views),0);const maxViews=hits.length?Math.max(...hits.map(h=>num(h.views))):0;const highlights=hits.filter(h=>h.highlight===true||num(h.views)>=DASHBOARD_TARGETS.starViews).length;
   const score=scoreFor(hits.length,totalViews);let delta=rawIndex(hits.length,totalViews)-100,label='vs target';
-  const prev=d.previous_day||d.previous||null;if(prev){let ps=Number(prev.x_score);if(!Number.isFinite(ps)){const ph=Array.isArray(prev.hits)?prev.hits.length:num(prev.hits_count);const pv=Array.isArray(prev.hits)?prev.hits.reduce((a,h)=>a+num(h.views),0):num(prev.total_views);ps=scoreFor(ph,pv)}if(Number.isFinite(ps)){delta=score-ps;label='vs prev day'}}
+  const prev=d.previous_day||d.previous||null;const prevEmpty=prev&&num(prev.hits_count)===0&&num(prev.total_views)===0&&!num(prev.x_score)&&!(Array.isArray(prev.hits)&&prev.hits.length);if(!prev||prevEmpty){delta=null;label='first run · no prev day'}else if(prev){let ps=Number(prev.x_score);if(!Number.isFinite(ps)){const ph=Array.isArray(prev.hits)?prev.hits.length:num(prev.hits_count);const pv=Array.isArray(prev.hits)?prev.hits.reduce((a,h)=>a+num(h.views),0):num(prev.total_views);ps=scoreFor(ph,pv)}if(Number.isFinite(ps)){delta=score-ps;label='vs prev day'}}
   countUp(document.getElementById('x-score'), score, {duration:1200, format:v=>String(Math.round(v))});
   const ring=document.getElementById('score-ring');
   const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if(reduce){ring.style.setProperty('--score',score)}
   else{const t0=performance.now();(function anim(now){const t=Math.min(1,(now-t0)/1200);ring.style.setProperty('--score', (score*easeOutCubic(t)).toFixed(2));if(t<1)requestAnimationFrame(anim)})(t0)}
-  const st=trendMarkup(delta,label);const scoreTrend=document.getElementById('score-trend');scoreTrend.className='trend '+st.dir;scoreTrend.innerHTML=st.html;
+  const st=delta==null?{dir:'flat',html:`<span class="trend-arrow">→</span><span>n/a · ${label}</span>`}:trendMarkup(delta,label);const scoreTrend=document.getElementById('score-trend');scoreTrend.className='trend '+st.dir;scoreTrend.innerHTML=st.html;
   const hp=pct(hits.length,DASHBOARD_TARGETS.hits),vp=pct(totalViews,DASHBOARD_TARGETS.views);document.getElementById('hits-target-copy').textContent=`${hits.length} / ${DASHBOARD_TARGETS.hits} · ${hp}%`;document.getElementById('views-target-copy').textContent=`${fmt(totalViews)} / ${fmt(DASHBOARD_TARGETS.views)} · ${vp}%`;
   requestAnimationFrame(()=>{[['hits-progress',hp],['views-progress',vp]].forEach(([id,p])=>{const el=document.getElementById(id);el.style.width=Math.min(100,p)+'%';if(p>=100)el.classList.add('done')})});
   const targetDone=hp>=100&&vp>=100;const targetState=document.getElementById('target-state');targetState.className='target-state '+(targetDone?'done':'pending');targetState.textContent=targetDone?'✓ DONE':'◷ NOT DONE';
@@ -893,7 +896,7 @@ async function boot(){
     ['Hits',hits.length,null,trendMarkup(hits.length-DASHBOARD_TARGETS.hits,'vs target')],
     ['★ Highlights',highlights,null,{dir:highlights?'up':'flat',html:`${highlights?'↑':'→'} ≥${fmt(DASHBOARD_TARGETS.starViews)} each`}],
     ['Total views',totalViews,fmt,trendMarkup(pct(totalViews,DASHBOARD_TARGETS.views)-100,'vs target')],
-    ['Outsiders',virals.length,null,trendMarkup(virals.length-num(d.virals_target||20),'vs brief')],
+    ['Outsiders',virals.length,null,virals.length?trendMarkup(virals.length-num(d.virals_target||20),'vs brief'):{dir:'flat',html:'→ no data yet'}],
     ['Top view',maxViews,fmt,trendMarkup(pct(maxViews,DASHBOARD_TARGETS.starViews)-100,'vs ★ line')]
   ];
   document.getElementById('stats').innerHTML=metrics.map(([k,v,formatter,t],i)=>`<article class="stat reveal"><div class="stat-k">${esc(k)}</div><div class="stat-v" id="stat-v-${i}" data-raw="${num(v)}">0</div><div class="stat-note ${t.dir}">${t.html}</div></article>`).join('');
@@ -902,9 +905,9 @@ async function boot(){
     const format = formatter || (x=>String(Math.round(x)));
     countUp(el, num(v), {duration:1000+i*80, format});
   });
-  const tz=d.timezone||'Europe/Moscow';
-  const updated=(()=>{if(!d.updated)return '—'; const s=String(d.updated); const hasTime=/T\d|\d{2}:\d{2}/.test(s); const dt=new Date(hasTime?s:s+'T12:00:00+03:00'); try{return dt.toLocaleString('en-GB',{timeZone:tz,day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})}catch(e){return dt.toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})}})();
-  document.getElementById('meta').textContent=`${d.date||'—'} · updated ${updated} · ${tz}`;
+  const tz=d.timezone||'America/New_York';
+  const updated=(()=>{if(!d.updated)return '—'; const s=String(d.updated); const hasTime=/T\d|\d{2}:\d{2}/.test(s); const dt=new Date(hasTime?s:s+'T12:00:00'); try{return dt.toLocaleString('en-GB',{timeZone:tz,day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:true,timeZoneName:'short'})}catch(e){return dt.toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})}})();
+  document.getElementById('meta').textContent=`${d.date||'—'} · updated ${updated} ET`;
   document.getElementById('chart-scale').textContent=`peak ${fmt(maxViews)} · ${hits.length} signals`;
   renderSparkline(hits);
   const lbs=d.leaderboards||{};
@@ -919,6 +922,8 @@ async function boot(){
   const weekR=fmtRange((lbs.week&&lbs.week.range)||lbs.days_included)||'—';
   const monthR=fmtRange((lbs.month&&lbs.month.range)||lbs.month_days_included)||'—';
   document.getElementById('lb-note').textContent=`best / total · week ${weekR} · month ${monthR} · as of ${lbs.as_of||d.date||'—'}`;
+  const lbEmpty=!((lbs.week&&lbs.week.entries||[]).length||(lbs.month&&lbs.month.entries||[]).length);
+  if(lbEmpty){const b=document.querySelector('section.boards');if(b){b.hidden=true;const h=b.previousElementSibling;if(h)h.hidden=true}}
   renderLeaderboard(document.getElementById('week-board'), lbs.week&&lbs.week.entries, op);
   renderLeaderboard(document.getElementById('month-board'), lbs.month&&lbs.month.entries, op);
   renderYourDay(d.you_rank||null, brand.handle);
@@ -929,11 +934,11 @@ async function boot(){
   document.getElementById('theme-toggle')?.addEventListener('click',()=>{
     setTimeout(()=>{renderSparkline(hits);renderDayCompare(d.day_roster||[], op)}, 50);
   });
-  const sorted=[...hits].sort((a,b)=>num(b.views)-num(a.views));document.getElementById('hits').innerHTML=sorted.map((h,i)=>{const threshold=h.highlight===true?DASHBOARD_TARGETS.starViews:DASHBOARD_TARGETS.minHitViews;const done=num(h.views)>=threshold;const draftId='draft-'+i;const draft=h.draft_en||'';return`<article class="card"><div class="card-top"><div class="identity"><div class="rank">${String(i+1).padStart(2,'0')}</div><div><div class="name">${esc(h.name||h.display_name||'Unknown')}</div><div class="handle">${esc(h.handle||'')}</div></div></div><div class="views-big">${esc(h.views_label||fmt(h.views))}<small>views</small></div></div><div class="hit-target ${done?'done':'not-done'}"><span class="mark">${done?'✓':'×'}</span><span>${done?'DONE':'NOT DONE'} · day target ≥${fmt(threshold)}${threshold===DASHBOARD_TARGETS.starViews?' ★':''}</span></div><div class="hook">${esc(h.hook||h.text||'')}</div>${h.video_tip?`<div class="chip">${esc(h.video_tip)}</div>`:''}<div class="draft-block"><div class="draft-head"><span class="draft-label">Draft · EN</span><button type="button" class="copy-btn" data-draft-id="${draftId}">COPY DRAFT</button></div><pre class="draft-text" id="${draftId}">${esc(draft)}</pre></div><a class="post-link" href="${esc(h.url||h.status_url||'#')}" target="_blank" rel="noopener">OPEN POST ↗</a></article>`}).join('')||'<p class="muted">No watchlist hits today.</p>';
+  const sorted=[...hits].sort((a,b)=>num(b.views)-num(a.views));document.getElementById('hits').innerHTML=sorted.map((h,i)=>{const threshold=h.highlight===true?DASHBOARD_TARGETS.starViews:DASHBOARD_TARGETS.minHitViews;const done=num(h.views)>=threshold;const draftId='draft-'+i;const draft=h.draft_en||'';return`<article class="card"><div class="card-top"><div class="identity"><div class="rank">${String(i+1).padStart(2,'0')}</div><div><div class="name">${esc(h.name||h.display_name||'Unknown')}</div><div class="handle">${esc(h.handle||'')}</div></div></div><div class="views-big">${esc(h.views_label||fmt(h.views))}<small>views</small></div></div><div class="hit-target ${done?'done':'not-done'}"><span class="mark">${done?'✓':'×'}</span><span>${done?'DONE':'NOT DONE'} · day target ≥${fmt(threshold)}${threshold===DASHBOARD_TARGETS.starViews?' ★':''}</span></div><div class="hook">${esc(h.hook||h.text||'')}</div>${h.video_tip?`<div class="chip">${esc(h.video_tip)}</div>`:''}${draft?`<div class="draft-block"><div class="draft-head"><span class="draft-label">Draft · EN</span><button type="button" class="copy-btn" data-draft-id="${draftId}">COPY DRAFT</button></div><pre class="draft-text" id="${draftId}">${esc(draft)}</pre>${h.draft_note?`<div class="chip">⚠ ${esc(h.draft_note)}</div>`:''}</div>`:''}${h.risk?`<div class="chip">⚠ ${esc(h.risk)} — don't copy this pattern</div>`:''}<a class="post-link" href="${esc(safeUrl(h.url||h.status_url))}" target="_blank" rel="noopener">OPEN POST ↗</a></article>`}).join('')||'<p class="muted">No watchlist hits today.</p>';
   document.querySelectorAll('.copy-btn').forEach(btn=>btn.addEventListener('click',()=>{const el=document.getElementById(btn.dataset.draftId);copyDraft(btn,el?el.textContent:'')}));
   staggerCards('#hits .card');
-  document.getElementById('patterns').innerHTML=(d.patterns||[]).map(p=>`<span class="tag">${esc(p)}</span>`).join('');document.getElementById('viral-count').textContent=`${virals.length} outsider signals`;
-  document.getElementById('virals').innerHTML=virals.map((v,i)=>{const pending=!v.url||v.url==='#';return`<article class="card${pending?' pending':''}"><div class="card-top"><div class="identity"><div class="rank">${String(i+1).padStart(2,'0')}</div><div><div class="name">${esc(v.name||v.display_name||'Unknown')}</div><div class="handle">${esc(v.handle||'')}</div></div></div><div class="views-big">${esc(v.views_label||fmt(v.views))}<small>views</small></div></div><div class="hook">${esc(v.hook||v.text||'')}</div><a class="post-link${pending?' disabled':''}" href="${esc(v.url||'#')}" target="_blank" rel="noopener">${pending?'PENDING SCRAPE':'OPEN POST ↗'}</a></article>`}).join('');
+  document.getElementById('patterns').innerHTML=(d.patterns||[]).map(p=>`<span class="tag">${esc(p)}</span>`).join('');document.getElementById('viral-count').textContent=`${virals.length} outsider signals`;if(!virals.length){const g=document.getElementById('virals');g.hidden=true;const h=g.previousElementSibling;if(h)h.hidden=true}
+  document.getElementById('virals').innerHTML=virals.map((v,i)=>{const pending=safeUrl(v.url)==='#';return`<article class="card${pending?' pending':''}"><div class="card-top"><div class="identity"><div class="rank">${String(i+1).padStart(2,'0')}</div><div><div class="name">${esc(v.name||v.display_name||'Unknown')}</div><div class="handle">${esc(v.handle||'')}</div></div></div><div class="views-big">${esc(v.views_label||fmt(v.views))}<small>views</small></div></div><div class="hook">${esc(v.hook||v.text||'')}</div><a class="post-link${pending?' disabled':''}" href="${esc(safeUrl(v.url))}" target="_blank" rel="noopener">${pending?'PENDING SCRAPE':'OPEN POST ↗'}</a></article>`}).join('');
   staggerCards('#virals .card');
   const narr=document.getElementById('virals-narrative');if(d.virals_narrative||d.narrative_synthesis){narr.hidden=false;narr.textContent=d.virals_narrative||d.narrative_synthesis}
   renderNoHits(normalizeNoHits(d.no_hits));
